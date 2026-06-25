@@ -7,7 +7,7 @@ WORKDIR /var/
 RUN apk update && \
     apk upgrade && \
     apk add git bash sed
-RUN git clone https://github.com/mathompl/AlarmServer-docker-fixed
+RUN git clone https://github.com/mathompl/AlarmServer-fixed
 
 RUN pip install tornado
 
