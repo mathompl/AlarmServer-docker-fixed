@@ -2,49 +2,71 @@ import logger
 
 from tornado import gen
 from tornado.tcpserver import TCPServer
-from tornado.iostream import IOStream, StreamClosedError
+from tornado.iostream import StreamClosedError
 
 from config import config
 from events import events
 from envisalink import get_checksum
 
-#TODO: handle exceptions
 
 class Proxy(object):
     def __init__(self):
-        if config.ENABLEPROXY == True:
-            logger.debug('Staring Envisalink Proxy')
-            proxy = ProxyServer()
-            proxy.listen(config.ENVISALINKPROXYPORT)
+        if not getattr(config, 'ENABLEPROXY', True):
+            logger.debug('Envisalink Proxy is disabled')
+            return
+
+        logger.info('Starting Envisalink Proxy on port ' + str(config.ENVISALINKPROXYPORT))
+        
+        self.proxy_server = ProxyServer()
+        self.proxy_server.listen(config.ENVISALINKPROXYPORT)
+
 
 class ProxyServer(TCPServer):
-    def __init__(self, io_loop=None, ssl_options=None, **kwargs):
-        TCPServer.__init__(self , ssl_options=ssl_options, **kwargs)
-        self.connections = {}
+    def __init__(self):
+        TCPServer.__init__(self)
+        self.connections = {}          # fromaddr -> ProxyConnection
+
+        # Rejestrujemy handler tak jak w oryginale
         events.register('proxy', self.proxy_event)
 
     @gen.coroutine
     def handle_stream(self, stream, address):
-        connection = ProxyConnection(stream, address)
         fromaddr = "%s:%s" % (address[0], address[1])
-        logger.debug('Proxy Connection from: %s' % fromaddr)
-        self.connections[fromaddr]=stream
-        yield connection.on_connect()
-        del self.connections[fromaddr]
+        logger.info('Proxy Client connected: ' + fromaddr + ' | Active: ' + str(len(self.connections) + 1))
 
-    #zone/parameters not used, should fix this to not be passed
+        connection = ProxyConnection(stream, address, self)
+        self.connections[fromaddr] = connection
+
+        try:
+            yield connection.on_connect()
+        finally:
+            if fromaddr in self.connections:
+                del self.connections[fromaddr]
+            logger.info('Proxy Client disconnected: ' + fromaddr + ' | Active: ' + str(len(self.connections)))
+
     @gen.coroutine
     def proxy_event(self, zone, parameters, input):
-        for s,k in self.connections.iteritems():
-            yield k.write(input)
+        """Oryginalna logika broadcastu"""
+        if not self.connections:
+            return
+
+        for fromaddr, conn in list(self.connections.items()):
+            try:
+                if conn.authenticated:           # tylko zalogowani klienci
+                    yield conn.send_raw(input)
+            except:
+                pass
+
 
 class ProxyConnection(object):
-    def __init__(self, stream, address):
-        self.authenticated = False
+    def __init__(self, stream, address, server):
         self.stream = stream
         self.address = address
+        self.server = server
+        self.authenticated = False
+
         self.stream.set_close_callback(self.on_disconnect)
-        self.send_command('5053')
+        self.send_command('5053')   # Request password
 
     @gen.coroutine
     def on_connect(self):
@@ -52,33 +74,52 @@ class ProxyConnection(object):
 
     @gen.coroutine
     def on_disconnect(self):
-        logger.debug('Client: %s:%s disconnected' % (self.address[0], self.address[1]))
-        
+        pass
+
     @gen.coroutine
     def dispatch_client(self):
         try:
             while True:
                 line = yield self.stream.read_until(b'\r\n')
-                if self.authenticated == True:
-                    events.put('envisalink', None, line) 
+                line_str = line.strip()
+
+                if not line_str:
+                    continue
+
+                if self.authenticated:
+                    events.put('envisalink', None, line)   # oryginalna logika
                 else:
-                    if line.strip() == ('005' + config.ENVISALINKPROXYPASS + get_checksum('005', config.ENVISALINKPROXYPASS)):
-                        logger.info('Proxy User Authenticated')
+                    expected = '005' + config.ENVISALINKPROXYPASS + get_checksum('005', config.ENVISALINKPROXYPASS)
+                    if line_str == expected:
+                        logger.info('Proxy User Authenticated: ' + str(self.address[0]) + ':' + str(self.address[1]))
                         self.authenticated = True
                         self.send_command('5051')
                     else:
-                        logger.info('Proxy User Authentication failed')
+                        logger.warning('Proxy Authentication failed from ' + str(self.address[0]) + ':' + str(self.address[1]))
                         self.send_command('5050')
                         self.stream.close()
+                        break
         except StreamClosedError:
-            #on_disconnect will catch this
+            pass
+        except Exception as e:
+            logger.error('Client error: ' + str(e))
+
+    @gen.coroutine
+    def send_command(self, data, checksum=True):
+        if checksum:
+            to_send = data + get_checksum(data, '') + '\r\n'
+        else:
+            to_send = data + '\r\n'
+
+        try:
+            yield self.stream.write(to_send)
+            logger.debug('PROXY < ' + to_send.strip())
+        except:
             pass
 
     @gen.coroutine
-    def send_command(self, data, checksum = True):
-        if checksum == True:
-            to_send = data+get_checksum(data, '')+'\r\n'
-        else:
-            to_send = data+'\r\n'
-        logger.debug('PROXY < %s' % to_send.strip())
-        yield self.stream.write(to_send)
+    def send_raw(self, data):
+        try:
+            yield self.stream.write(data)
+        except:
+            pass
