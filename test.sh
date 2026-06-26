@@ -11,6 +11,7 @@ PROXY_PORT=4025
 USERNAME=admin
 PROXY_USERNAME=user
 ALARMCODE=1111
+LOGLEVEL=DEBUG
 TZ="Europe/Warsaw"
 # ============================================================
 
@@ -31,12 +32,14 @@ echo "=============================================="
 cp "$CONFIG_TEMPLATE" "$CONFIG_TEMP"
 
 # 2. Replace placeholders using ENV values
-sed -i "s/EVL_IP/$IP/g"                    "$CONFIG_TEMP"
-sed -i "s/EVL_PORT/$PORT/g"                "$CONFIG_TEMP"
-sed -i "s/EVL_USERNAME/$USERNAME/g"        "$CONFIG_TEMP"
-sed -i "s/EVL_PROXY_PORT/$PROXY_PORT/g"    "$CONFIG_TEMP"
-sed -i "s/EVL_PROXY_USERNAME/$PROXY_USERNAME/g" "$CONFIG_TEMP"
-sed -i "s/EVL_ALARMCODE/$ALARMCODE/g"      "$CONFIG_TEMP"
+# 2. Replace {EVL_XXX} placeholders
+sed -i "s/{IP}/$IP/g"                    "$CONFIG_TEMP"
+sed -i "s/{PORT}/$PORT/g"                "$CONFIG_TEMP"
+sed -i "s/{PROXY_PORT}/$PROXY_PORT/g"    "$CONFIG_TEMP"
+sed -i "s/{USERNAME}/$USERNAME/g"        "$CONFIG_TEMP"
+sed -i "s/{PROXY_USERNAME}/$PROXY_USERNAME/g" "$CONFIG_TEMP"
+sed -i "s/{ALARMCODE}/$ALARMCODE/g"      "$CONFIG_TEMP"
+sed -i "s/{LOGLEVEL}/$LOGLEVEL/g"        "$CONFIG_TEMP"
 
 echo "Setting timezone to: $TZ"
 ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
