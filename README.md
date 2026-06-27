@@ -1,4 +1,6 @@
-# Envisalink AlarmServer - Fixed & Stabilized
+## Envisalink 2DS / 3 / 4 Alarm Server (TPI Proxy & HTTP/JSON API).
+Enables connections of multiple clients with Envisalink TPI interface.
+
 This is a patched and improved version of the original repo [https://github.com/juggie/AlarmServer](https://github.com/juggie/AlarmServer) 
 
 Docker image:
