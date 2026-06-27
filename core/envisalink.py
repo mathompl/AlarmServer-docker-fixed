@@ -53,81 +53,89 @@ class Client(object):
 
         self.do_connect()
 
-        # Check every 8 seconds if the connection is stalled
+        # Check every 8 seconds
         tornado.ioloop.PeriodicCallback(self.keepalive_poll, 8000).start()
 
+    # ==================== POPRAWIONY keepalive_poll ====================
     def keepalive_poll(self):
         if self._connection is None or self._reconnecting:
-            logger.debug("keepalive_poll: skipping, no connection or reconnecting")
             return
-    
-        if getattr(self._connection, 'closed', lambda: False)():
-            logger.debug("keepalive_poll: connection already closed")
+
+        # Bezpieczniejsze sprawdzanie czy połączenie jest zamknięte
+        try:
+            if self._connection.closed():
+                logger.debug("keepalive_poll: connection already closed")
+                self._connection = None
+                return
+        except Exception:
+            self._connection = None
             return
-    
+
         inactivity = time.time() - self._last_activity
-    
         logger.debug("keepalive_poll: inactivity = %.1f seconds" % inactivity)
-    
+
         # ==================== WATCHDOG ====================
         if inactivity > 60:
             logger.critical(
-                "WATCHDOG: No response from Envisalink for %d seconds! Exiting process..." % 
+                "WATCHDOG: No response from Envisalink for %d seconds! Exiting process..." %
                 int(inactivity)
             )
             sys.exit(1)
         # ==================================================
-    
+
         # Zombie connection detection
         if inactivity > 20:
             logger.warning(
-                "Zombie connection detected (%.1f seconds of inactivity)" % inactivity
+                "Zombie connection detected (%.1f seconds of inactivity) - forcing reconnect" % inactivity
             )
-            self.log_zombie_event()
             self._pending_poll = False
-    
-            if self._connection:
-                try:
-                    self._connection.close()
-                except Exception as e:
-                    logger.debug("Exception while closing zombie connection: %s" % str(e))
+
+            try:
+                self._connection.close()
+            except Exception:
+                pass
+
+            self._connection = None
+
+            if not self._reconnecting:
+                self._reconnecting = True
+                tornado.ioloop.IOLoop.current().add_callback(self._reconnect)
             return
 
-        # Send keepalive command if needed
+        # Send keepalive
         if not self._pending_poll:
             self._pending_poll = True
             logger.debug("Sending keepalive command '000'")
             self.send_command("000")
 
-
     def update_activity(self):
         self._last_activity = time.time()
 
-    
     @gen.coroutine
     def do_connect(self, reconnect=False):
         if reconnect:
             delay = min(self._retrydelay, 60)
-            logger.warning('Connection lost, reconnecting in %s seconds...', delay)
+            logger.warning('Connection lost, reconnecting in %s seconds...' % delay)
+
             yield gen.sleep(delay)
-            self._retrydelay = min(self._retrydelay * 1.5, 60)  
+            self._retrydelay = min(self._retrydelay * 1.5, 60)
         else:
             self._retrydelay = 20
-    
+
         while self._connection is None:
             logger.debug('Connecting to {}:{}'.format(config.ENVISALINKHOST, config.ENVISALINKPORT))
-    
+
             try:
                 self._connection = yield gen.with_timeout(
-                    datetime.timedelta(seconds=20),   
+                    datetime.timedelta(seconds=20),
                     self.tcpclient.connect(config.ENVISALINKHOST, config.ENVISALINKPORT)
                 )
-    
+
                 # TCP Keepalive
                 if (self._connection is not None and
                         hasattr(self._connection, 'socket') and
                         self._connection.socket is not None):
-    
+
                     sock = self._connection.socket
                     try:
                         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -139,15 +147,19 @@ class Client(object):
                         logger.warning("Failed to set keepalive: %s" % str(e))
                 else:
                     logger.warning("No socket available after connect")
-    
-                    self._connection.set_close_callback(self.handle_close)
-    
+
+                self._connection.set_close_callback(self.handle_close)
+
+                # Reset stanu po udanym połączeniu
+                self._pending_poll = False
+                self._last_activity = time.time()
+
             except (StreamClosedError, gen.TimeoutError):
                 logger.warning('Connection failed or timeout - retrying...')
                 self._connection = None
                 yield gen.sleep(5)
                 continue
-    
+
             except gaierror:
                 if reconnect:
                     yield gen.sleep(self._retrydelay)
@@ -155,7 +167,7 @@ class Client(object):
                 else:
                     logger.error('Unable to resolve hostname %s. Exiting.' % config.ENVISALINKHOST)
                     sys.exit(0)
-    
+
             try:
                 line = yield gen.with_timeout(
                     datetime.timedelta(seconds=15),
@@ -163,14 +175,13 @@ class Client(object):
                 )
                 logger.debug("Connected to %s:%i" % (config.ENVISALINKHOST, config.ENVISALINKPORT))
                 self.handle_line(line)
-                self._retrydelay = 20          
+                self._retrydelay = 20
                 break
             except Exception:
                 logger.warning("Initial read failed - retrying")
                 self._connection = None
                 yield gen.sleep(5)
                 continue
-
 
     @gen.coroutine
     def handle_close(self):
@@ -180,14 +191,6 @@ class Client(object):
             self._reconnecting = True
             tornado.ioloop.IOLoop.current().add_callback(self._reconnect)
 
-    gen.coroutine
-    def _reconnect(self):
-       try:
-           yield self.do_connect(reconnect=True)
-       finally:
-           self._reconnecting = False
-
-
     @gen.coroutine
     def _reconnect(self):
         try:
@@ -195,11 +198,9 @@ class Client(object):
         finally:
             self._reconnecting = False
 
-
     @gen.coroutine
     def send_command(self, code, data='', checksum=True):
         self.update_activity()
-
 
         if checksum:
             to_send = code + data + get_checksum(code, data) + '\r\n'
@@ -271,7 +272,7 @@ class Client(object):
                 )
                 self.update_activity()
 
-
+            # ==================== POPRAWIONE OBSŁUGIWANIE BŁĘDÓW ====================
             except gen.TimeoutError:
                 logger.warning("Read timeout from EVL - forcing reconnect")
                 if self._connection:
@@ -279,11 +280,20 @@ class Client(object):
                         self._connection.close()
                     except Exception:
                         pass
+                self._connection = None
+
+                if not self._reconnecting:
+                    self._reconnecting = True
+                    tornado.ioloop.IOLoop.current().add_callback(self._reconnect)
                 break
+
             except StreamClosedError:
+                logger.debug("StreamClosedError in handle_line")
+                self._connection = None
                 break
 
     def format_event(self, event, parameters):
+        # ... (bez zmian)
         if 'type' in event:
             if event['type'] in ('partition', 'zone'):
                 if event['type'] == 'partition':
@@ -321,9 +331,10 @@ class Client(object):
             sys.exit(0)
 
     def log_zombie_event(self):
-        logger.warning ("Zombie connection detected. Envisalink connection restarted.")
+        logger.warning("Zombie connection detected. Envisalink connection restarted.")
 
     def handle_event(self, code, parameters, event, message):
+        # ... (bez zmian)
         if not 'type' in event:
             return
 
@@ -348,6 +359,7 @@ class Client(object):
         self.handle_event(code, parameters[0], event, message)
 
     def request_action(self, eventType, type, parameters):
+        # ... (bez zmian)
         try:
             partition = str(parameters['partition'])
         except (TypeError, KeyError):
