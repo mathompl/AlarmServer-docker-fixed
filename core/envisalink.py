@@ -164,7 +164,7 @@ class Client:
                     datetime.timedelta(seconds=20),        
                     self._connection.read_until(self._terminator)
                 )
-                logger.info("✅ Connected to Envisalink %s:%i" % (config.ENVISALINKHOST, config.ENVISALINKPORT))
+                logger.info("Connected to Envisalink %s:%i" % (config.ENVISALINKHOST, config.ENVISALINKPORT))
                 self.handle_line(line)
                 self._retrydelay = 15
                 break

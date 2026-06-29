@@ -1,4 +1,5 @@
 from core import logger
+from collections import defaultdict
 
 import time
 from tornado.ioloop import PeriodicCallback
@@ -29,14 +30,32 @@ class ProxyServer(TCPServer):
     def __init__(self):
         TCPServer.__init__(self)
         self.connections = {}
+        self.connections_per_ip = defaultdict(int) 
 
         events.register('proxy', self.proxy_event)
+
+        self.status_callback = PeriodicCallback(self.log_active_clients, 60000)  # 60 sekund
+        self.status_callback.start()
+
+
+    def _can_accept_connection(self, ip):
+        max_per_ip = getattr(config, 'PROXY_MAX_CONNECTIONS_PER_IP', 5)
+        return self.connections_per_ip[ip] < max_per_ip
 
     @gen.coroutine
     def handle_stream(self, stream, address):
         fromaddr = f"{address[0]}:{address[1]}"
-        logger.info('Proxy Client connected: ' + fromaddr + ' | Active: ' + str(len(self.connections) + 1))
+        ip = address[0]
+        if not self._can_accept_connection(ip):
+            logger.warning(f'Connection from {ip} rejected - too many connections ({self.connections_per_ip[ip]})')
+            try:
+                stream.close()
+            except Exception:
+                pass
+            return
 
+        logger.info('Proxy Client connected: ' + fromaddr + ' | Active: ' + str(len(self.connections) + 1))
+        self.connections_per_ip[ip] += 1
 
         connection = ProxyConnection(stream, address, self)
         self.connections[fromaddr] = connection
@@ -44,9 +63,14 @@ class ProxyServer(TCPServer):
         try:
             yield connection.on_connect()
         finally:
-            if fromaddr in self.connections:
+             if fromaddr in self.connections:
                 del self.connections[fromaddr]
-                logger.info('Proxy Client disconnected: ' + fromaddr + ' | Active: ' + str(len(self.connections)))
+
+             self.connections_per_ip[ip] -= 1
+             if self.connections_per_ip[ip] <= 0:
+                del self.connections_per_ip[ip]
+
+             logger.info(f'Proxy Client disconnected: {fromaddr} | Active: {len(self.connections)}')
 
     @gen.coroutine
     def proxy_event(self, zone, parameters, input):
@@ -61,14 +85,6 @@ class ProxyServer(TCPServer):
             except Exception:
                 pass
 
-    def __init__(self):
-        TCPServer.__init__(self)
-        self.connections = {}
-
-        events.register('proxy', self.proxy_event)
-
-        self.status_callback = PeriodicCallback(self.log_active_clients, 60000)  # 60 sekund
-        self.status_callback.start()
 
     def log_active_clients(self):
         if not self.connections:
@@ -81,6 +97,11 @@ class ProxyServer(TCPServer):
 
 class ProxyConnection(object):
     def __init__(self, stream, address, server):
+        # Rate limiting
+        self._last_commands = []          
+        self._rate_limit = 10 
+        self._rate_window = 1.0           
+
         self.stream = stream
         self.address = address
         self.server = server
@@ -96,6 +117,17 @@ class ProxyConnection(object):
     @gen.coroutine
     def on_disconnect(self):
         pass
+
+    def _check_rate_limit(self):
+        """Prosty rate limiter – zwraca True jeśli można wysłać komendę"""
+        now = time.time()
+        # Usuń stare wpisy
+        self._last_commands = [t for t in self._last_commands if now - t < self._rate_window]
+
+        if len(self._last_commands) >= self._rate_limit:
+            return False
+        self._last_commands.append(now)
+        return True
 
     @gen.coroutine
     def dispatch_client(self):
@@ -121,6 +153,10 @@ class ProxyConnection(object):
 
                 if self.authenticated:
                     # Przekazujemy jako STRING (to jest ważne!)
+                    if not self._check_rate_limit():
+                        logger.warning(f'Rate limit exceeded for {self.address[0]}:{self.address[1]} - dropping command')
+                        continue
+        
                     events.put('envisalink', None, line_str)
                 else:
                     # Autentykacja

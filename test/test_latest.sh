@@ -11,7 +11,7 @@ PROXY_PORT=4025
 USERNAME=admin
 PROXY_USERNAME=user
 ALARMCODE=1111
-LOGLEVEL=INFO
+LOGLEVEL=DEBUG
 TZ="Europe/Warsaw"
 # ============================================================
 

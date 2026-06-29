@@ -5,6 +5,8 @@ MAXPARTITIONS = 16
 MAXZONES = 128
 MAXALARMUSERS = 47
 
+PROXY_MAX_CONNECTIONS_PER_IP = 5
+
 
 class config:
     _config = None
