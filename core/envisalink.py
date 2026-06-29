@@ -171,7 +171,9 @@ class Client:
             except Exception:
                 logger.warning("Initial read failed - retrying")
                 self._connection = None
-                yield gen.sleep(5)
+                delay =  self._retrydelay  # albo 15-20 sekund
+                logger.info(f"Waiting {delay} seconds before next connection attempt...")
+                yield gen.sleep(delay) 
                 continue
 
     @gen.coroutine
