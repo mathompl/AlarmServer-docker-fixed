@@ -7,6 +7,7 @@ from tornado.iostream import StreamClosedError
 from core.config import config
 from core.events import events
 from core.envisalink import get_checksum
+from core.envisalinkcommands import get_command_name
 
 
 class Proxy(object):
@@ -83,9 +84,17 @@ class ProxyConnection(object):
                 line = yield self.stream.read_until(b'\r\n')
                 line = line.strip()
 
-                # Debug - co dostał proxy od klienta
+                if not line:
+                    continue
+
                 line_str = line.decode('ascii', errors='replace')
-#                logger.debug(f'PROXY > RX from client [{self.address[0]}:{self.address[1]}]: bytes={line} | str="{line_str}"')
+                core_cmd = line_str[:3] if len(line_str) >= 3 else line_str
+        
+                logger.debug(
+                    f'Client {self.address[0]}:{self.address[1]} '
+                    f'RX < {core_cmd} {get_command_name(line_str)} '
+                )
+
 
                 if not line:
                     continue
@@ -93,7 +102,6 @@ class ProxyConnection(object):
                 if self.authenticated:
                     # Przekazujemy jako STRING (to jest ważne!)
                     events.put('envisalink', None, line_str)
-                    logger.debug(f'CLIENT ({self.address[0]}:{self.address[1]}) RX < ' + line_str)
                 else:
                     # Autentykacja
                     password = config.ENVISALINKPROXYPASS
