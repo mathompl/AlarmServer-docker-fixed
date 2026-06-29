@@ -76,7 +76,7 @@ class ProxyServer(TCPServer):
             return
 
         clients = list(self.connections.keys())
-        logger.info(f"Proxy: Active clients ({len(clients)}): {', '.join(clients)}")
+        logger.debug(f"Proxy: Active clients ({len(clients)}): {', '.join(clients)}")
 
 
 class ProxyConnection(object):
