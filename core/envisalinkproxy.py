@@ -57,6 +57,8 @@ class ProxyServer(TCPServer):
                 msg += '\r\n'
         else:
             msg = str(message) + '\r\n'
+        logger.debug(f'PROXY > {message} {get_command_name(message)}')
+
 
         for conn in list(self.connections.values()):
             try:

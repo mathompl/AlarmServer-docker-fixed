@@ -484,7 +484,7 @@ class Client:
     def envisalink_proxy(self, eventType, type, parameters, *args):
         """Forward command from Proxy clients to real Envisalink"""
         if self._connection is None or self._reconnecting:
-            status = "999 Envisalink OFFLINE - command not sent\r\n"
+            status = "999"
             events.put('proxy_status', None, None, status)
             return False
 

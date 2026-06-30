@@ -21,6 +21,7 @@ evl_ClientCommands = {
     "074": "Keep Alive",
     "080": "Request Interior HVAC Broadcast",
     "200": "Send Code",
+    "999": "No connection to EVL"
 }
 
 
