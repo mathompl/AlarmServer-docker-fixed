@@ -421,16 +421,38 @@ class Client:
 
     def format_event(self, event, parameters):
         """Format event message for logging"""
-        if 'type' in event:
+        if 'type' not in event or 'name' not in event:
+            return event.get('name', 'Unknown event')
+  
+        try:
             if event['type'] == 'partition':
                 p = int(parameters[0]) if len(parameters) > 0 else 0
-                if p in config.PARTITIONNAMES:
-                    return event['name'].format(str(config.PARTITIONNAMES[p]))
+                partition_name = str(config.PARTITIONNAMES.get(p, f"Partition {p}"))
+  
+
+                name_template = event['name']
+                if '{}' in name_template or '{0}' in name_template:
+                    return name_template.format(partition_name)
+                else:
+                    return name_template
+  
             elif event['type'] == 'zone':
                 z = int(parameters) if parameters.isdigit() else 0
-                if z in config.ZONENAMES:
-                    return event['name'].format(str(config.ZONENAMES[z]))
-        return event['name'].format(str(parameters))
+                zone_name = str(config.ZONENAMES.get(z, f"Zone {z}"))
+  
+                name_template = event['name']
+                if '{}' in name_template or '{0}' in name_template:
+                    return name_template.format(zone_name)
+                else:
+                    return name_template
+  
+            else:
+              
+                return event['name'].format(str(parameters)) if '{}' in event['name'] else event['name']
+  
+        except Exception as e:
+            logger.warning(f"Error formatting event {event.get('name')}: {e}")
+            return event.get('name', 'Unknown event')
 
     def handle_event(self, code, parameters, event, message):
         """Default handler for events"""
