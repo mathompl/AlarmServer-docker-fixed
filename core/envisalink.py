@@ -57,6 +57,7 @@ class Client:
         self._terminator = b"\r\n"
         self._retrydelay = 30
         self._max_attempts = 5
+        self._max_attempts_exit = 15
         self._last_activity = time.time()
         self._pending_poll = False
         self._reconnecting = False
@@ -118,10 +119,15 @@ class Client:
                 yield gen.sleep(3)
 
                 if self._reconnect_attempt > self._max_attempts:
-                    logger.error(f"Max reconnection attempts ({self._max_attempts}) reached. Rebooting Envisalink.")
+                    logger.error(f"Reconnection attempts ({self._max_attempts}) - rebooting Envisalink.")
                     self.reboot_envisalink()
                     self._reconnect_attempt = 0
-                    #sys.exit(0)
+
+
+                if self._reconnect_attempt > self._max_attempts:
+                    logger.error(f"Max reconnection attempts ({self._max_attempts}) reached. Exiting.")
+                    sys.exit(1)
+
 
             try:
                 self._connection = yield gen.with_timeout(
